@@ -1,4 +1,9 @@
-"""Ingest pipelines for different video sources."""
+"""Ingest pipelines for different video sources.
+
+Each pipeline: download (if needed) -> chunk -> transcribe -> extract entities.
+Entity extraction runs automatically via Claude Sonnet, creating/updating
+structured notes in the Obsidian vault knowledge graph.
+"""
 
 import os
 import subprocess
@@ -17,6 +22,7 @@ def ingest_local(
     overlap: int = 5,
     smart_chunks: bool = True,
     whisper_model: str | None = None,
+    extract_entities: bool = True,
     verbose: bool = False,
     on_progress=None,
 ) -> dict:
@@ -78,6 +84,7 @@ def ingest_local(
             verbose=verbose,
         )
 
+        chunk_transcripts = []
         for i, chunk in enumerate(chunks):
             if on_progress:
                 on_progress(f"  {basename} chunk {i + 1}/{len(chunks)}: transcribing...")
@@ -98,9 +105,23 @@ def ingest_local(
                 transcript_source="whisper",
             )
 
+            chunk_transcripts.append({
+                "transcript": plain,
+                "transcript_timestamped": timestamped,
+                "start_time": chunk["start_time"],
+                "end_time": chunk["end_time"],
+            })
+
             if plain:
                 total_transcribed += 1
             total_chunks += 1
+
+        # Entity extraction
+        if extract_entities and chunk_transcripts:
+            _run_extraction(
+                chunk_transcripts, title=basename, source_type="local",
+                duration=duration, verbose=verbose, on_progress=on_progress,
+            )
 
         total_files += 1
 
@@ -119,6 +140,7 @@ def ingest_youtube(
     overlap: int = 5,
     smart_chunks: bool = True,
     whisper_model: str | None = None,
+    extract_entities: bool = True,
     verbose: bool = False,
     on_progress=None,
 ) -> dict:
@@ -201,6 +223,7 @@ def ingest_youtube(
         verbose=verbose,
     )
     total_transcribed = 0
+    chunk_transcripts = []
 
     for i, chunk in enumerate(chunks):
         if on_progress:
@@ -242,8 +265,23 @@ def ingest_youtube(
             transcript_timestamped=whisper_ts,
             transcript_source=source,
         )
+
+        chunk_transcripts.append({
+            "transcript": transcript,
+            "transcript_timestamped": whisper_ts,
+            "start_time": chunk["start_time"],
+            "end_time": chunk["end_time"],
+        })
+
         if transcript:
             total_transcribed += 1
+
+    # Entity extraction
+    if extract_entities and chunk_transcripts:
+        _run_extraction(
+            chunk_transcripts, title=title, source_type="youtube",
+            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+        )
 
     return {
         "files": 1,
@@ -259,6 +297,7 @@ def ingest_instagram(
     url: str,
     store: VideoStore,
     whisper_model: str | None = None,
+    extract_entities: bool = True,
     verbose: bool = False,
     on_progress=None,
 ) -> dict:
@@ -311,6 +350,7 @@ def ingest_instagram(
         chunks = chunk_video(video_file, chunk_duration=30, overlap=5, keep_audio=True, smart=True, verbose=verbose)
 
     total_transcribed = 0
+    chunk_transcripts = []
     for i, chunk in enumerate(chunks):
         if on_progress:
             on_progress(f"  Chunk {i + 1}/{len(chunks)}: transcribing...")
@@ -329,8 +369,21 @@ def ingest_instagram(
             transcript_timestamped=timestamped,
             transcript_source="whisper",
         )
+        chunk_transcripts.append({
+            "transcript": plain,
+            "transcript_timestamped": timestamped,
+            "start_time": chunk["start_time"],
+            "end_time": chunk["end_time"],
+        })
         if plain:
             total_transcribed += 1
+
+    # Entity extraction
+    if extract_entities and chunk_transcripts:
+        _run_extraction(
+            chunk_transcripts, title=title, source_type="instagram",
+            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+        )
 
     return {
         "files": 1,
@@ -339,6 +392,31 @@ def ingest_instagram(
         "skipped": 0,
         "title": title,
     }
+
+
+# ------------------------------------------------------------------
+# Entity extraction helper
+# ------------------------------------------------------------------
+
+def _run_extraction(
+    chunk_transcripts: list[dict],
+    title: str,
+    source_type: str,
+    url: str | None = None,
+    duration: float | None = None,
+    verbose: bool = False,
+    on_progress=None,
+):
+    """Run entity extraction and persist to vault. Fails silently."""
+    try:
+        from .extract import extract_and_persist
+        extract_and_persist(
+            chunk_transcripts, title=title, source_type=source_type,
+            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+        )
+    except Exception as e:
+        if on_progress:
+            on_progress(f"  Entity extraction failed (non-fatal): {e}")
 
 
 # ------------------------------------------------------------------

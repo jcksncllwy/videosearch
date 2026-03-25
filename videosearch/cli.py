@@ -55,9 +55,11 @@ def ingest():
 @click.option("--overlap", default=5, show_default=True, help="Overlap between chunks (fixed mode) or min chunk size (smart mode).")
 @click.option("--smart/--no-smart", default=True, show_default=True,
               help="Snap chunk boundaries to silence gaps in audio.")
+@click.option("--extract/--no-extract", default=True, show_default=True,
+              help="Extract entities to Obsidian vault after transcription.")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_local_cmd(path, chunk_duration, overlap, smart, whisper_model, verbose):
+def ingest_local_cmd(path, chunk_duration, overlap, smart, extract, whisper_model, verbose):
     """Ingest local video files from PATH (file or directory)."""
     from .ingest import ingest_local
     from .store import VideoStore
@@ -73,6 +75,7 @@ def ingest_local_cmd(path, chunk_duration, overlap, smart, whisper_model, verbos
         overlap=overlap,
         smart_chunks=smart,
         whisper_model=whisper_model,
+        extract_entities=extract,
         verbose=verbose,
         on_progress=progress,
     )
@@ -90,9 +93,11 @@ def ingest_local_cmd(path, chunk_duration, overlap, smart, whisper_model, verbos
 @click.option("--overlap", default=5, show_default=True, help="Overlap/min chunk size in seconds.")
 @click.option("--smart/--no-smart", default=True, show_default=True,
               help="Snap chunk boundaries to silence gaps in audio.")
+@click.option("--extract/--no-extract", default=True, show_default=True,
+              help="Extract entities to Obsidian vault after transcription.")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_youtube_cmd(url, chunk_duration, overlap, smart, whisper_model, verbose):
+def ingest_youtube_cmd(url, chunk_duration, overlap, smart, extract, whisper_model, verbose):
     """Ingest a YouTube video by URL."""
     from .ingest import ingest_youtube
     from .store import VideoStore
@@ -109,6 +114,7 @@ def ingest_youtube_cmd(url, chunk_duration, overlap, smart, whisper_model, verbo
             overlap=overlap,
             smart_chunks=smart,
             whisper_model=whisper_model,
+            extract_entities=extract,
             verbose=verbose,
             on_progress=progress,
         )
@@ -131,9 +137,11 @@ def ingest_youtube_cmd(url, chunk_duration, overlap, smart, whisper_model, verbo
 
 @ingest.command("instagram")
 @click.argument("url")
+@click.option("--extract/--no-extract", default=True, show_default=True,
+              help="Extract entities to Obsidian vault after transcription.")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_instagram_cmd(url, whisper_model, verbose):
+def ingest_instagram_cmd(url, extract, whisper_model, verbose):
     """Ingest an Instagram reel by URL."""
     from .ingest import ingest_instagram
     from .store import VideoStore
@@ -147,6 +155,7 @@ def ingest_instagram_cmd(url, whisper_model, verbose):
         result = ingest_instagram(
             url, store,
             whisper_model=whisper_model,
+            extract_entities=extract,
             verbose=verbose,
             on_progress=progress,
         )
