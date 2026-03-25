@@ -87,20 +87,38 @@ def _find_claude() -> str | None:
 
 
 def _call_sonnet(prompt: str) -> str | None:
-    """Call Claude Sonnet via claude -p for structured extraction."""
+    """Call Claude Sonnet via claude -p for structured extraction.
+
+    Uses lean context flags to minimize token overhead. Default claude -p
+    loads ~37K tokens (CLAUDE.md, all tools, all skills). Entity extraction
+    is pure text-in/JSON-out -- no tools, no vault conventions, no skills
+    needed. Lean flags cut context to ~12K tokens.
+    """
     claude = _find_claude()
     if not claude:
         return None
 
+    # Lean system prompt replaces full CLAUDE.md (~361 lines)
+    system = (
+        "You are an entity extraction assistant. "
+        "Return ONLY valid JSON. No tools, no file access, no conversation."
+    )
+
     try:
+        env = os.environ.copy()
+        env["ENABLE_TOOL_SEARCH"] = "false"
+
         result = subprocess.run(
             [
                 claude, "-p", prompt,
                 "--model", "sonnet",
                 "--output-format", "text",
                 "--max-turns", "1",
+                "--system-prompt", system,
+                "--disable-slash-commands",
             ],
             capture_output=True, text=True, timeout=120,
+            env=env,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
