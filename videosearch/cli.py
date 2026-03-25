@@ -51,11 +51,13 @@ def ingest():
 
 @ingest.command("local")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--chunk-duration", default=30, show_default=True, help="Chunk duration in seconds.")
-@click.option("--overlap", default=5, show_default=True, help="Overlap between chunks in seconds.")
+@click.option("--chunk-duration", default=30, show_default=True, help="Target chunk duration in seconds.")
+@click.option("--overlap", default=5, show_default=True, help="Overlap between chunks (fixed mode) or min chunk size (smart mode).")
+@click.option("--smart/--no-smart", default=True, show_default=True,
+              help="Snap chunk boundaries to silence gaps in audio.")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_local_cmd(path, chunk_duration, overlap, whisper_model, verbose):
+def ingest_local_cmd(path, chunk_duration, overlap, smart, whisper_model, verbose):
     """Ingest local video files from PATH (file or directory)."""
     from .ingest import ingest_local
     from .store import VideoStore
@@ -69,6 +71,7 @@ def ingest_local_cmd(path, chunk_duration, overlap, whisper_model, verbose):
         path, store,
         chunk_duration=chunk_duration,
         overlap=overlap,
+        smart_chunks=smart,
         whisper_model=whisper_model,
         verbose=verbose,
         on_progress=progress,
@@ -83,11 +86,13 @@ def ingest_local_cmd(path, chunk_duration, overlap, whisper_model, verbose):
 
 @ingest.command("youtube")
 @click.argument("url")
-@click.option("--chunk-duration", default=30, show_default=True, help="Chunk duration in seconds.")
-@click.option("--overlap", default=5, show_default=True, help="Overlap between chunks in seconds.")
+@click.option("--chunk-duration", default=30, show_default=True, help="Target chunk duration in seconds.")
+@click.option("--overlap", default=5, show_default=True, help="Overlap/min chunk size in seconds.")
+@click.option("--smart/--no-smart", default=True, show_default=True,
+              help="Snap chunk boundaries to silence gaps in audio.")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_youtube_cmd(url, chunk_duration, overlap, whisper_model, verbose):
+def ingest_youtube_cmd(url, chunk_duration, overlap, smart, whisper_model, verbose):
     """Ingest a YouTube video by URL."""
     from .ingest import ingest_youtube
     from .store import VideoStore
@@ -102,6 +107,7 @@ def ingest_youtube_cmd(url, chunk_duration, overlap, whisper_model, verbose):
             url, store,
             chunk_duration=chunk_duration,
             overlap=overlap,
+            smart_chunks=smart,
             whisper_model=whisper_model,
             verbose=verbose,
             on_progress=progress,

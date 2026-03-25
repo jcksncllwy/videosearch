@@ -15,6 +15,7 @@ def ingest_local(
     store: VideoStore,
     chunk_duration: int = 30,
     overlap: int = 5,
+    smart_chunks: bool = True,
     whisper_model: str | None = None,
     verbose: bool = False,
     on_progress=None,
@@ -26,6 +27,7 @@ def ingest_local(
         store: VideoStore instance.
         chunk_duration: Seconds per chunk.
         overlap: Overlap between chunks in seconds.
+        smart_chunks: Snap chunk boundaries to silence gaps.
         whisper_model: Whisper model name.
         verbose: Print debug info.
         on_progress: Callback(message: str) for progress updates.
@@ -67,13 +69,24 @@ def ingest_local(
             duration=duration,
         )
 
-        chunks = chunk_video(abs_path, chunk_duration=chunk_duration, overlap=overlap, keep_audio=True)
+        chunks = chunk_video(
+            abs_path,
+            chunk_duration=chunk_duration,
+            overlap=overlap,
+            keep_audio=True,
+            smart=smart_chunks,
+            verbose=verbose,
+        )
 
         for i, chunk in enumerate(chunks):
             if on_progress:
                 on_progress(f"  {basename} chunk {i + 1}/{len(chunks)}: transcribing...")
 
-            plain, timestamped = transcribe_video_chunk(chunk["chunk_path"], model=whisper_model)
+            plain, timestamped = transcribe_video_chunk(
+                chunk["chunk_path"],
+                chunk_start_time=chunk["start_time"],
+                model=whisper_model,
+            )
 
             store.add_chunk(
                 video_id=video_id,
@@ -104,6 +117,7 @@ def ingest_youtube(
     store: VideoStore,
     chunk_duration: int = 30,
     overlap: int = 5,
+    smart_chunks: bool = True,
     whisper_model: str | None = None,
     verbose: bool = False,
     on_progress=None,
@@ -112,6 +126,8 @@ def ingest_youtube(
 
     Grabs both the video and any available captions. Runs Whisper too
     (captions are often mediocre). Both transcript sources are kept.
+    YouTube SRT captions are time-sliced per chunk so each chunk gets
+    only the captions relevant to its time range.
     """
     import json as json_mod
 
@@ -159,12 +175,12 @@ def ingest_youtube(
     if not video_file:
         raise RuntimeError("No video file found after download")
 
-    # Parse YouTube captions if available
-    yt_captions = None
+    # Parse YouTube captions if available (structured with timestamps)
+    yt_timed_entries = None
     if srt_file:
-        yt_captions = _parse_srt(srt_file)
+        yt_timed_entries = _parse_srt_timed(srt_file)
         if on_progress:
-            on_progress(f"  Found YouTube captions ({len(yt_captions)} chars)")
+            on_progress(f"  Found YouTube captions ({len(yt_timed_entries)} entries)")
 
     # Register video
     video_id = store.add_video(
@@ -176,21 +192,32 @@ def ingest_youtube(
     )
 
     # Chunk and transcribe
-    chunks = chunk_video(video_file, chunk_duration=chunk_duration, overlap=overlap, keep_audio=True)
+    chunks = chunk_video(
+        video_file,
+        chunk_duration=chunk_duration,
+        overlap=overlap,
+        keep_audio=True,
+        smart=smart_chunks,
+        verbose=verbose,
+    )
     total_transcribed = 0
 
     for i, chunk in enumerate(chunks):
         if on_progress:
             on_progress(f"  Chunk {i + 1}/{len(chunks)}: transcribing...")
 
-        # Get Whisper transcript
-        whisper_plain, whisper_ts = transcribe_video_chunk(chunk["chunk_path"], model=whisper_model)
+        # Get Whisper transcript (with absolute timestamps)
+        whisper_plain, whisper_ts = transcribe_video_chunk(
+            chunk["chunk_path"],
+            chunk_start_time=chunk["start_time"],
+            model=whisper_model,
+        )
 
         # Get YouTube caption slice for this chunk's time range
         yt_slice = None
-        if yt_captions:
-            yt_slice = _slice_captions_for_range(
-                yt_captions, chunk["start_time"], chunk["end_time"]
+        if yt_timed_entries:
+            yt_slice = _slice_timed_captions(
+                yt_timed_entries, chunk["start_time"], chunk["end_time"]
             )
 
         # Prefer Whisper for transcript field (generally better quality),
@@ -281,14 +308,18 @@ def ingest_instagram(
     if duration <= 60:
         chunks = [{"chunk_path": video_file, "source_file": video_file, "start_time": 0.0, "end_time": duration}]
     else:
-        chunks = chunk_video(video_file, chunk_duration=30, overlap=5, keep_audio=True)
+        chunks = chunk_video(video_file, chunk_duration=30, overlap=5, keep_audio=True, smart=True, verbose=verbose)
 
     total_transcribed = 0
     for i, chunk in enumerate(chunks):
         if on_progress:
             on_progress(f"  Chunk {i + 1}/{len(chunks)}: transcribing...")
 
-        plain, timestamped = transcribe_video_chunk(chunk["chunk_path"], model=whisper_model)
+        plain, timestamped = transcribe_video_chunk(
+            chunk["chunk_path"],
+            chunk_start_time=chunk["start_time"],
+            model=whisper_model,
+        )
         store.add_chunk(
             video_id=video_id,
             start_time=chunk["start_time"],
@@ -367,13 +398,23 @@ def _parse_srt_timed(srt_path: str) -> list[dict]:
     return entries
 
 
-def _slice_captions_for_range(full_text: str, start: float, end: float) -> str | None:
-    """Very rough slice -- for proper time-aligned slicing, use _parse_srt_timed.
+def _slice_timed_captions(
+    entries: list[dict], start: float, end: float,
+) -> str | None:
+    """Extract caption text that overlaps with a time range.
 
-    For now, returns the full caption text (since we store it per-chunk anyway).
-    TODO: implement proper time-range slicing from timed SRT data.
+    Args:
+        entries: List of {start, end, text} from _parse_srt_timed.
+        start: Chunk start time in seconds.
+        end: Chunk end time in seconds.
+
+    Returns:
+        Concatenated caption text for the range, or None if empty.
     """
-    # For the initial version, YouTube captions are stored as full text.
-    # Time-aligned slicing will be added when we have the timed SRT data
-    # flowing through the pipeline.
-    return full_text if full_text else None
+    lines = []
+    for entry in entries:
+        # Include if the caption overlaps with the chunk at all
+        if entry["end"] > start and entry["start"] < end:
+            lines.append(entry["text"])
+
+    return " ".join(lines) if lines else None
