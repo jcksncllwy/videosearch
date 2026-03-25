@@ -15,8 +15,16 @@ dependencies = [
     "imageio-ffmpeg>=0.5",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 vs = "videosearch.cli:cli"
 
 [tool.setuptools.packages.find]
 include = ["videosearch*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that download videos or do heavy I/O (deselect with '-m \"not slow\"')",
+]

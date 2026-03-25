@@ -189,7 +189,7 @@ def _compute_fixed_boundaries(
 
     while start < duration:
         end = min(start + chunk_duration, duration)
-        if boundaries and (end - start) < overlap:
+        if boundaries and (end - start) <= overlap:
             break
         boundaries.append((start, end))
         start += step
