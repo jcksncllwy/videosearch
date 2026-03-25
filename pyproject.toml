@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videosearch"
+version = "0.1.0"
+description = "Search video collections with natural language. Free transcript search, with optional paid visual search via Gemini."
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+    "python-dotenv>=1.0",
+    "google-genai>=1.0",
+    "ffmpeg-python>=0.2",
+    "imageio-ffmpeg>=0.5",
+]
+
+[project.scripts]
+vs = "videosearch.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["videosearch*"]
