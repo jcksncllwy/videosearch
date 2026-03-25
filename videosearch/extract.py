@@ -36,6 +36,8 @@ VIDEO METADATA:
 Title: {title}
 Source: {source_type}
 URL: {url}
+Channel: {channel}
+Description: {description}
 
 TRANSCRIPT (with absolute timestamps):
 {transcript}
@@ -68,6 +70,7 @@ Rules:
 - For tools, include the specific tool/library/framework name, not generic categories
 - If no meaningful entities are found, return {{"entities": []}}
 - Timestamps should come from the transcript's timestamp markers
+- The video description and channel name provide additional context -- extract entities from those too if substantive
 """
 
 
@@ -175,6 +178,8 @@ def _create_video_note(
     url: str | None,
     duration: float | None,
     entities: list[dict],
+    description: str | None = None,
+    channel: str | None = None,
 ) -> Path:
     """Create a vault note for the video itself."""
     slug = _slugify(title)
@@ -195,12 +200,19 @@ def _create_video_note(
     }
     if url:
         frontmatter["url"] = url
+    if channel:
+        frontmatter["channel"] = channel
     if duration:
         frontmatter["duration"] = round(duration)
 
     body_lines = [f"# {title}", ""]
     if url:
         body_lines.append(f"Source: {url}")
+        body_lines.append("")
+    if description:
+        body_lines.append("## Description")
+        body_lines.append("")
+        body_lines.append(description.strip())
         body_lines.append("")
 
     if entities:
@@ -343,6 +355,8 @@ def extract_entities_from_transcript(
     title: str,
     source_type: str = "local",
     url: str | None = None,
+    description: str | None = None,
+    channel: str | None = None,
 ) -> list[dict]:
     """Extract entities from a transcript using Claude Sonnet.
 
@@ -351,6 +365,8 @@ def extract_entities_from_transcript(
         title: Video title.
         source_type: youtube, instagram, or local.
         url: Source URL if applicable.
+        description: Video description / caption text.
+        channel: Channel or uploader name.
 
     Returns:
         List of entity dicts from Sonnet's extraction.
@@ -359,6 +375,8 @@ def extract_entities_from_transcript(
         title=title,
         source_type=source_type,
         url=url or "N/A",
+        description=description or "N/A",
+        channel=channel or "N/A",
         transcript=transcript[:8000],  # Cap to avoid token limits
     )
 
@@ -372,6 +390,8 @@ def extract_and_persist(
     source_type: str = "local",
     url: str | None = None,
     duration: float | None = None,
+    description: str | None = None,
+    channel: str | None = None,
     verbose: bool = False,
     on_progress=None,
 ) -> dict:
@@ -383,6 +403,8 @@ def extract_and_persist(
         source_type: youtube, instagram, local.
         url: Source URL.
         duration: Video duration in seconds.
+        description: Video description / caption text.
+        channel: Channel or uploader name.
         verbose: Print debug info.
         on_progress: Callback(message: str).
 
@@ -409,6 +431,7 @@ def extract_and_persist(
 
     entities = extract_entities_from_transcript(
         full_transcript, title, source_type, url,
+        description=description, channel=channel,
     )
 
     if verbose and on_progress:
@@ -416,7 +439,10 @@ def extract_and_persist(
 
     # Create video note
     video_slug = _slugify(title)
-    video_path = _create_video_note(title, source_type, url, duration, entities)
+    video_path = _create_video_note(
+        title, source_type, url, duration, entities,
+        description=description, channel=channel,
+    )
     if on_progress:
         on_progress(f"  Video note: {video_path.relative_to(VAULT_PATH)}")
 

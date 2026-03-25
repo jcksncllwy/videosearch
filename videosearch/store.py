@@ -50,6 +50,8 @@ class VideoStore:
                 source_type TEXT NOT NULL DEFAULT 'local',
                 source_url TEXT,
                 title TEXT,
+                description TEXT,
+                channel TEXT,
                 duration REAL,
                 added_at TEXT NOT NULL
             );
@@ -69,6 +71,13 @@ class VideoStore:
 
             CREATE INDEX IF NOT EXISTS idx_chunks_video ON chunks(video_id);
         """)
+
+        # Migrate: add description and channel columns if missing
+        cols = {row[1] for row in c.execute("PRAGMA table_info(videos)").fetchall()}
+        if "description" not in cols:
+            c.execute("ALTER TABLE videos ADD COLUMN description TEXT")
+        if "channel" not in cols:
+            c.execute("ALTER TABLE videos ADD COLUMN channel TEXT")
 
         # FTS5 virtual table for transcript search
         # Check if it exists first (CREATE IF NOT EXISTS doesn't work for virtual tables)
@@ -96,15 +105,18 @@ class VideoStore:
         source_type: str = "local",
         source_url: str | None = None,
         title: str | None = None,
+        description: str | None = None,
+        channel: str | None = None,
         duration: float | None = None,
     ) -> str:
         """Register a video. Returns video ID."""
         video_id = hashlib.sha256(path.encode()).hexdigest()[:16]
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
-            """INSERT OR IGNORE INTO videos (id, path, source_type, source_url, title, duration, added_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (video_id, path, source_type, source_url, title, duration, now),
+            """INSERT OR IGNORE INTO videos
+               (id, path, source_type, source_url, title, description, channel, duration, added_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video_id, path, source_type, source_url, title, description, channel, duration, now),
         )
         self._conn.commit()
         return video_id
@@ -195,7 +207,8 @@ class VideoStore:
         rows = self._conn.execute(
             """SELECT c.id, c.video_id, c.start_time, c.end_time,
                       c.transcript, c.transcript_source, c.chunk_path,
-                      v.path as source_file, v.title, v.source_type, v.source_url,
+                      v.path as source_file, v.title, v.description, v.channel,
+                      v.source_type, v.source_url,
                       rank
                FROM chunks_fts fts
                JOIN chunks c ON c.rowid = fts.rowid
@@ -212,6 +225,8 @@ class VideoStore:
                 "chunk_id": row["id"],
                 "source_file": row["source_file"],
                 "title": row["title"],
+                "description": row["description"],
+                "channel": row["channel"],
                 "source_type": row["source_type"],
                 "source_url": row["source_url"],
                 "start_time": row["start_time"],

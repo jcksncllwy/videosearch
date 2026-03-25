@@ -95,9 +95,10 @@ def ingest_local_cmd(path, chunk_duration, overlap, smart, extract, whisper_mode
               help="Snap chunk boundaries to silence gaps in audio.")
 @click.option("--extract/--no-extract", default=True, show_default=True,
               help="Extract entities to Obsidian vault after transcription.")
+@click.option("--cookies-from", default=None, help="Browser to extract cookies from (e.g. 'chrome:Profile 1', firefox).")
 @click.option("--whisper-model", default=None, help="Whisper model (default: large-v3-turbo).")
 @click.option("--verbose", is_flag=True, help="Show debug info.")
-def ingest_youtube_cmd(url, chunk_duration, overlap, smart, extract, whisper_model, verbose):
+def ingest_youtube_cmd(url, chunk_duration, overlap, smart, extract, cookies_from, whisper_model, verbose):
     """Ingest a YouTube video by URL."""
     from .ingest import ingest_youtube
     from .store import VideoStore
@@ -115,6 +116,7 @@ def ingest_youtube_cmd(url, chunk_duration, overlap, smart, extract, whisper_mod
             smart_chunks=smart,
             whisper_model=whisper_model,
             extract_entities=extract,
+            cookies_from_browser=cookies_from,
             verbose=verbose,
             on_progress=progress,
         )

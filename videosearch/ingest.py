@@ -14,6 +14,21 @@ from .chunker import chunk_video, extract_audio, get_duration, scan_directory
 from .store import VideoStore
 from .transcribe import transcribe_video_chunk
 
+DEFAULT_COOKIE_JAR = Path.home() / ".videosearch" / "youtube-cookies.txt"
+
+
+def _ytdlp_cookie_args(cookies_from_browser: str | None = None) -> list[str]:
+    """Build yt-dlp cookie arguments.
+
+    Prefers a saved cookie jar at ~/.videosearch/youtube-cookies.txt (no
+    Keychain popup). Falls back to --cookies-from-browser if specified.
+    """
+    if DEFAULT_COOKIE_JAR.exists():
+        return ["--cookies", str(DEFAULT_COOKIE_JAR)]
+    if cookies_from_browser:
+        return ["--cookies-from-browser", cookies_from_browser]
+    return []
+
 
 def ingest_local(
     path: str,
@@ -141,6 +156,7 @@ def ingest_youtube(
     smart_chunks: bool = True,
     whisper_model: str | None = None,
     extract_entities: bool = True,
+    cookies_from_browser: str | None = None,
     verbose: bool = False,
     on_progress=None,
 ) -> dict:
@@ -154,18 +170,21 @@ def ingest_youtube(
     import json as json_mod
 
     # Get video metadata first
-    meta_result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-download", url],
-        capture_output=True, text=True,
-    )
+    cookie_args = _ytdlp_cookie_args(cookies_from_browser)
+    meta_cmd = ["yt-dlp", "--dump-json", "--no-download"] + cookie_args + [url]
+    meta_result = subprocess.run(meta_cmd, capture_output=True, text=True)
     if meta_result.returncode != 0:
         raise RuntimeError(f"yt-dlp metadata failed: {meta_result.stderr}")
     meta = json_mod.loads(meta_result.stdout)
     title = meta.get("title", "Unknown")
     duration = meta.get("duration")
+    description = meta.get("description") or ""
+    channel = meta.get("channel") or meta.get("uploader") or ""
 
     if on_progress:
         on_progress(f"Downloading: {title}")
+        if channel:
+            on_progress(f"  Channel: {channel}")
 
     # Download video + subtitles to temp dir
     tmp_dir = tempfile.mkdtemp(prefix="videosearch_yt_")
@@ -179,8 +198,7 @@ def ingest_youtube(
         "--sub-lang", "en",
         "--convert-subs", "srt",
         "-o", output_template,
-        url,
-    ]
+    ] + cookie_args + [url]
     dl_result = subprocess.run(dl_cmd, capture_output=True, text=True)
     if dl_result.returncode != 0:
         raise RuntimeError(f"yt-dlp download failed: {dl_result.stderr}")
@@ -210,6 +228,8 @@ def ingest_youtube(
         source_type="youtube",
         source_url=url,
         title=title,
+        description=description,
+        channel=channel,
         duration=duration,
     )
 
@@ -280,7 +300,8 @@ def ingest_youtube(
     if extract_entities and chunk_transcripts:
         _run_extraction(
             chunk_transcripts, title=title, source_type="youtube",
-            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+            url=url, duration=duration, description=description,
+            channel=channel, verbose=verbose, on_progress=on_progress,
         )
 
     return {
@@ -304,12 +325,30 @@ def ingest_instagram(
     """Download and ingest an Instagram reel.
 
     Reels are short (15-90s) so typically a single chunk, no splitting needed.
+    Captures the post caption as description for search and entity extraction.
     """
-    tmp_dir = tempfile.mkdtemp(prefix="videosearch_ig_")
-    output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
+    import json as json_mod
+
+    # Get metadata first (caption, uploader, duration)
+    meta_result = subprocess.run(
+        ["yt-dlp", "--dump-json", "--no-download", url],
+        capture_output=True, text=True,
+    )
+    meta = {}
+    if meta_result.returncode == 0 and meta_result.stdout.strip():
+        meta = json_mod.loads(meta_result.stdout)
+
+    description = meta.get("description") or ""
+    channel = meta.get("channel") or meta.get("uploader") or ""
+    meta_title = meta.get("title") or ""
 
     if on_progress:
         on_progress(f"Downloading reel...")
+        if channel:
+            on_progress(f"  Creator: {channel}")
+
+    tmp_dir = tempfile.mkdtemp(prefix="videosearch_ig_")
+    output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
     # yt-dlp handles Instagram too
     dl_cmd = [
@@ -333,13 +372,16 @@ def ingest_instagram(
         raise RuntimeError("No video file found after download")
 
     duration = get_duration(video_file)
-    title = os.path.splitext(os.path.basename(video_file))[0]
+    # Use metadata title if available, fall back to filename
+    title = meta_title or os.path.splitext(os.path.basename(video_file))[0]
 
     video_id = store.add_video(
         path=video_file,
         source_type="instagram",
         source_url=url,
         title=title,
+        description=description,
+        channel=channel,
         duration=duration,
     )
 
@@ -382,7 +424,8 @@ def ingest_instagram(
     if extract_entities and chunk_transcripts:
         _run_extraction(
             chunk_transcripts, title=title, source_type="instagram",
-            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+            url=url, duration=duration, description=description,
+            channel=channel, verbose=verbose, on_progress=on_progress,
         )
 
     return {
@@ -404,6 +447,8 @@ def _run_extraction(
     source_type: str,
     url: str | None = None,
     duration: float | None = None,
+    description: str | None = None,
+    channel: str | None = None,
     verbose: bool = False,
     on_progress=None,
 ):
@@ -412,7 +457,8 @@ def _run_extraction(
         from .extract import extract_and_persist
         extract_and_persist(
             chunk_transcripts, title=title, source_type=source_type,
-            url=url, duration=duration, verbose=verbose, on_progress=on_progress,
+            url=url, duration=duration, description=description,
+            channel=channel, verbose=verbose, on_progress=on_progress,
         )
     except Exception as e:
         if on_progress:
