@@ -21,6 +21,7 @@ VIDEOS_FOLDER = VAULT_PATH / "references" / "videos"
 CONTACTS_FOLDER = VAULT_PATH / "references" / "contacts"
 TOOLS_FOLDER = VAULT_PATH / "references" / "tools"
 ACCOUNTS_FOLDER = VAULT_PATH / "references" / "accounts"
+TRANSCRIPTS_FOLDER = VAULT_PATH / "references" / "transcripts"
 
 # Entity types we extract from video transcripts and their vault folders
 ENTITY_FOLDERS = {
@@ -251,6 +252,8 @@ def _create_video_note(
             frontmatter["channel"] = f"[[{account_slug}]]"
         else:
             frontmatter["channel"] = channel
+    # Link to transcript note (same slug, different folder)
+    frontmatter["transcript"] = f"[[{slug}]]"
     if duration:
         frontmatter["duration"] = round(duration)
 
@@ -280,10 +283,108 @@ def _create_video_note(
     return path
 
 
+def _fmt_heading_time(seconds: float) -> str:
+    """Format seconds as HH:MM:SS for transcript chunk headings."""
+    h, remainder = divmod(int(seconds), 3600)
+    m, s = divmod(remainder, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _create_transcript_note(
+    title: str,
+    source_type: str,
+    duration: float | None,
+    transcripts: list[dict],
+    transcript_source: str = "whisper",
+    model: str | None = None,
+) -> Path:
+    """Create a vault transcript note with chunk headings for deep-linking.
+
+    Each chunk becomes an H2 heading like ## 00:05:30 - 00:06:00 so
+    entity notes can deep-link via [[transcript-slug#00:05:30 - 00:06:00]].
+    """
+    slug = _slugify(title)
+    path = TRANSCRIPTS_FOLDER / f"{slug}.md"
+
+    if path.exists():
+        return path
+
+    TRANSCRIPTS_FOLDER.mkdir(parents=True, exist_ok=True)
+
+    tags = ["transcript", source_type]
+    frontmatter = {
+        "title": f"Transcript: {title}",
+        "type": "transcript",
+        "tags": tags,
+        "transcribes": f"[[{slug}]]",
+        "transcriptSource": transcript_source,
+        "chunks": len(transcripts),
+        "created": str(date.today()),
+    }
+    if model:
+        frontmatter["model"] = model
+    if duration:
+        frontmatter["duration"] = round(duration)
+
+    # Build body with chunk headings
+    body_lines = [f"# Transcript: {title}", ""]
+
+    for t in transcripts:
+        start = t.get("start_time", 0)
+        end = t.get("end_time", 0)
+        heading = f"{_fmt_heading_time(start)} - {_fmt_heading_time(end)}"
+        body_lines.append(f"## {heading}")
+        body_lines.append("")
+
+        # Prefer timestamped version, fall back to plain
+        text = t.get("transcript_timestamped") or t.get("transcript") or ""
+        if text.strip():
+            body_lines.append(text.strip())
+        else:
+            body_lines.append("*(no speech detected)*")
+        body_lines.append("")
+
+    content = _format_note(frontmatter, "\n".join(body_lines))
+    path.write_text(content)
+    return path
+
+
+def _find_chunk_heading(timestamp: str, chunk_ranges: list[dict]) -> str | None:
+    """Find the transcript chunk heading that contains a timestamp.
+
+    Args:
+        timestamp: Entity timestamp as "HH:MM:SS".
+        chunk_ranges: List of {start_time, end_time} from transcripts.
+
+    Returns:
+        Heading string like "00:05:30 - 00:06:00" or None.
+    """
+    if not timestamp or not chunk_ranges:
+        return None
+    # Parse HH:MM:SS to seconds
+    parts = timestamp.split(":")
+    try:
+        ts_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except (ValueError, IndexError):
+        return None
+    for chunk in chunk_ranges:
+        if chunk["start_time"] <= ts_seconds < chunk["end_time"]:
+            start = _fmt_heading_time(chunk["start_time"])
+            end = _fmt_heading_time(chunk["end_time"])
+            return f"{start} - {end}"
+    # Fall back to first chunk if timestamp is 00:00:00
+    if ts_seconds == 0 and chunk_ranges:
+        start = _fmt_heading_time(chunk_ranges[0]["start_time"])
+        end = _fmt_heading_time(chunk_ranges[0]["end_time"])
+        return f"{start} - {end}"
+    return None
+
+
 def _create_or_update_entity(
     entity: dict,
     video_slug: str,
     video_title: str,
+    chunk_ranges: list[dict] | None = None,
 ) -> tuple[Path | None, str]:
     """Create or update a vault note for an extracted entity.
 
@@ -307,10 +408,15 @@ def _create_or_update_entity(
     context = entity.get("context", "")
     relationships = entity.get("relationships", [])
 
-    # Build a rich mention block: context + relationships from this video
-    mention_parts = [f"**[[{_slugify(video_title)}]]**"]
+    # Build a rich mention block: context + relationships + transcript deep-link
+    transcript_slug = _slugify(video_title)
+    mention_parts = [f"**[[{transcript_slug}]]**"]
     if timestamp:
         mention_parts[0] += f" at {timestamp}"
+        # Add transcript deep-link if we can resolve the chunk
+        heading = _find_chunk_heading(timestamp, chunk_ranges or [])
+        if heading:
+            mention_parts[0] += f" ([[{transcript_slug}#{heading}|transcript]])"
     if context:
         mention_parts.append(f"  {context}")
     for rel in relationships:
@@ -626,6 +732,35 @@ def extract_and_persist(
     if verbose and on_progress:
         on_progress(f"  Found {len(entities)} entities")
 
+    # Determine primary transcript source across all chunks
+    sources = set()
+    for t in transcripts:
+        src = t.get("transcript_source", "whisper")
+        if src:
+            sources.add(src)
+    if "whisper+youtube" in sources:
+        primary_source = "whisper+youtube"
+    elif "youtube_captions" in sources and "whisper" in sources:
+        primary_source = "whisper+youtube"
+    elif "youtube_captions" in sources:
+        primary_source = "youtube_captions"
+    else:
+        primary_source = "whisper"
+
+    # Create transcript note
+    transcript_path = _create_transcript_note(
+        title, source_type, duration, transcripts,
+        transcript_source=primary_source,
+    )
+    if on_progress:
+        on_progress(f"  Transcript: {transcript_path.relative_to(VAULT_PATH)}")
+
+    # Build chunk ranges for transcript deep-linking
+    chunk_ranges = [
+        {"start_time": t["start_time"], "end_time": t["end_time"]}
+        for t in transcripts
+    ]
+
     # Create video note
     video_slug = _slugify(title)
     video_path = _create_video_note(
@@ -660,7 +795,7 @@ def extract_and_persist(
     skipped = 0
 
     for entity in entities:
-        path, action = _create_or_update_entity(entity, video_slug, title)
+        path, action = _create_or_update_entity(entity, video_slug, title, chunk_ranges)
         if action == "created":
             created += 1
             if on_progress:
