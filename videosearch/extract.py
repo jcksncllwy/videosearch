@@ -307,25 +307,47 @@ def _create_or_update_entity(
     context = entity.get("context", "")
     relationships = entity.get("relationships", [])
 
-    ts_str = f" at {timestamp}" if timestamp else ""
-    mention_line = f"Mentioned in [[{_slugify(video_title)}]]{ts_str} -- {context}"
+    # Build a rich mention block: context + relationships from this video
+    mention_parts = [f"**[[{_slugify(video_title)}]]**"]
+    if timestamp:
+        mention_parts[0] += f" at {timestamp}"
+    if context:
+        mention_parts.append(f"  {context}")
+    for rel in relationships:
+        pred = rel.get("predicate", "")
+        target = rel.get("target", "")
+        if pred and target:
+            mention_parts.append(f"  {pred}: [[{_slugify(target)}]]")
+    mention_block = "\n".join(mention_parts)
 
     if path.exists():
-        # Update: append mention if not already there
         existing = path.read_text()
         video_ref = _slugify(video_title)
-        if video_ref not in existing:
-            # Append to body
-            updated = existing.rstrip() + f"\n\n{mention_line}\n"
-            path.write_text(updated)
+        if video_ref in existing:
+            return path, "skipped"
 
-            # Add mentionedIn to frontmatter if not present
-            if "mentionedIn:" not in existing:
-                _add_frontmatter_field(path, "mentionedIn", f'"[[{video_ref}]]"')
-            return path, "updated"
-        return path, "skipped"
+        # --- Backfill missing frontmatter relationships ---
+        _backfill_relationships(path, entity_type, relationships)
 
-    # Create new note
+        # Re-read after potential frontmatter changes
+        existing = path.read_text()
+
+        # --- Append mention to Video Mentions section ---
+        if "## Video Mentions" in existing:
+            # Append to existing section
+            updated = existing.rstrip() + f"\n\n{mention_block}\n"
+        else:
+            # Create the section
+            updated = existing.rstrip() + f"\n\n## Video Mentions\n\n{mention_block}\n"
+        path.write_text(updated)
+
+        # Add mentionedIn to frontmatter if not present
+        if "mentionedIn:" not in existing:
+            _add_frontmatter_field(path, "mentionedIn", f'"[[{video_ref}]]"')
+
+        return path, "updated"
+
+    # --- Create new note ---
     folder.mkdir(parents=True, exist_ok=True)
 
     if entity_type == "person":
@@ -337,7 +359,6 @@ def _create_or_update_entity(
             "mentionedIn": f"[[{_slugify(video_title)}]]",
             "created": str(date.today()),
         }
-        # Add relationships
         for rel in relationships:
             if rel.get("predicate") == "worksFor":
                 frontmatter["worksFor"] = f"[[{_slugify(rel['target'])}]]"
@@ -365,10 +386,40 @@ def _create_or_update_entity(
     else:
         return None, "skipped"
 
-    body = f"# {name}\n\n{mention_line}\n"
+    body = f"# {name}\n\n## Video Mentions\n\n{mention_block}\n"
     content = _format_note(frontmatter, body)
     path.write_text(content)
     return path, "created"
+
+
+# Mapping of entity_type -> {predicate -> frontmatter_key}
+_BACKFILL_PREDICATES = {
+    "person": {"worksFor": "worksFor"},
+    "organization": {},
+    "tool": {"createdBy": "createdBy"},
+}
+
+
+def _backfill_relationships(
+    path: Path, entity_type: str, relationships: list[dict],
+):
+    """Add missing relationship fields to an existing note's frontmatter.
+
+    Only adds fields that don't already exist -- never overwrites.
+    """
+    pred_map = _BACKFILL_PREDICATES.get(entity_type, {})
+    if not pred_map:
+        return
+
+    existing = path.read_text()
+    for rel in relationships:
+        predicate = rel.get("predicate", "")
+        target = rel.get("target", "")
+        fm_key = pred_map.get(predicate)
+        if fm_key and target and f"{fm_key}:" not in existing:
+            _add_frontmatter_field(
+                path, fm_key, f'"[[{_slugify(target)}]]"',
+            )
 
 
 def _create_or_update_account(
@@ -392,16 +443,31 @@ def _create_or_update_account(
     slug = _account_slug(handle, name, platform)
     path = ACCOUNTS_FOLDER / f"{slug}.md"
 
-    mention_line = f"Channel for [[{_slugify(video_title)}]] -- {context}"
+    mention_line = f"**[[{_slugify(video_title)}]]** -- {context}"
 
     if path.exists():
         existing = path.read_text()
         video_ref = _slugify(video_title)
-        if video_ref not in existing:
+        if video_ref in existing:
+            return path, "skipped"
+
+        # Backfill managedBy if missing
+        for rel in relationships:
+            if rel.get("predicate") == "managedBy" and rel.get("target"):
+                if "managedBy:" not in existing:
+                    _add_frontmatter_field(
+                        path, "managedBy",
+                        f'"[[{_slugify(rel["target"])}]]"',
+                    )
+
+        # Append to Video Mentions section
+        existing = path.read_text()  # re-read after potential frontmatter change
+        if "## Video Mentions" in existing:
             updated = existing.rstrip() + f"\n\n{mention_line}\n"
-            path.write_text(updated)
-            return path, "updated"
-        return path, "skipped"
+        else:
+            updated = existing.rstrip() + f"\n\n## Video Mentions\n\n{mention_line}\n"
+        path.write_text(updated)
+        return path, "updated"
 
     # Create new account note
     ACCOUNTS_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -430,7 +496,7 @@ def _create_or_update_account(
         else:
             frontmatter["managedBy"] = managed_by
 
-    body = f"# {display_name}\n\n{mention_line}\n"
+    body = f"# {display_name}\n\n## Video Mentions\n\n{mention_line}\n"
     content = _format_note(frontmatter, body)
     path.write_text(content)
     return path, "created"
