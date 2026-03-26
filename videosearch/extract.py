@@ -20,14 +20,29 @@ VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT", os.path.expanduser("~/obsidia
 VIDEOS_FOLDER = VAULT_PATH / "references" / "videos"
 CONTACTS_FOLDER = VAULT_PATH / "references" / "contacts"
 TOOLS_FOLDER = VAULT_PATH / "references" / "tools"
+ACCOUNTS_FOLDER = VAULT_PATH / "references" / "accounts"
 
 # Entity types we extract from video transcripts and their vault folders
 ENTITY_FOLDERS = {
     "person": CONTACTS_FOLDER,
     "organization": CONTACTS_FOLDER,
     "tool": TOOLS_FOLDER,
+    "account": ACCOUNTS_FOLDER,
     "video": VIDEOS_FOLDER,
 }
+
+# Known social platform URL patterns -> platform identifiers
+PLATFORM_PATTERNS = [
+    (r"youtube\.com|youtu\.be", "youtube"),
+    (r"instagram\.com", "instagram"),
+    (r"twitter\.com|x\.com", "x"),
+    (r"twitch\.tv", "twitch"),
+    (r"tiktok\.com", "tiktok"),
+    (r"github\.com", "github"),
+    (r"linkedin\.com", "linkedin"),
+    (r"spotify\.com", "spotify"),
+    (r"discord\.gg", "discord"),
+]
 
 EXTRACTION_PROMPT = """\
 You are extracting structured entities from a video transcript for a knowledge graph.
@@ -42,23 +57,32 @@ Description: {description}
 TRANSCRIPT (with absolute timestamps):
 {transcript}
 
-Extract entities that are substantively discussed or referenced -- not just name-dropped in passing. For each entity, determine:
-- name: proper name
-- type: one of "person", "organization", "tool" (software/service/framework)
+Extract entities that are substantively discussed or referenced. For each entity, determine:
+- name: proper name or display name
+- type: one of "person", "organization", "tool" (software/service/framework), "account" (social media / web platform account)
 - context: one sentence about how they're mentioned in this video
-- timestamp: the approximate timestamp where they're first mentioned (HH:MM:SS format, from the transcript timestamps)
-- relationships: any relationships to other entities mentioned (e.g., "works for Datadog", "created by Google")
+- timestamp: the approximate timestamp where they're first mentioned (HH:MM:SS format, from the transcript timestamps). Use "00:00:00" for entities found only in the description.
+- relationships: any relationships to other entities mentioned (e.g., "worksFor: Datadog", "createdBy: Google", "managedBy: Ludwig Ahgren")
+
+For accounts specifically:
+- Extract social media accounts mentioned in the video or description (YouTube channels, Instagram, X/Twitter, Twitch, TikTok, etc.)
+- Include the platform in the name: "Ludwig (YouTube)", "@ludwigahgren (Instagram)"
+- Use "platform" field to indicate which platform
+- Use "handle" field for the username/handle (without @)
+- Use "managedBy" relationship to link to the person or org who runs it
 
 Return ONLY valid JSON in this exact format, no other text:
 {{
   "entities": [
     {{
       "name": "Entity Name",
-      "type": "person|organization|tool",
+      "type": "person|organization|tool|account",
       "context": "Brief context of how they're mentioned",
       "timestamp": "00:01:35",
+      "platform": "youtube|instagram|x|twitch|tiktok|github|spotify|null",
+      "handle": "username_without_at_sign_or_null",
       "relationships": [
-        {{"predicate": "worksFor|createdBy|uses", "target": "Other Entity Name"}}
+        {{"predicate": "worksFor|createdBy|uses|managedBy", "target": "Other Entity Name"}}
       ]
     }}
   ]
@@ -68,6 +92,8 @@ Rules:
 - Only include entities mentioned substantively (discussed, explained, demonstrated), not passing references
 - For people, include full names when available. Skip generic references ("someone", "a guy")
 - For tools, include the specific tool/library/framework name, not generic categories
+- For accounts, extract from social links in the description and any accounts mentioned in the transcript
+- The "platform" and "handle" fields are only for type "account" -- set to null for other types
 - If no meaningful entities are found, return {{"entities": []}}
 - Timestamps should come from the transcript's timestamp markers
 - The video description and channel name provide additional context -- extract entities from those too if substantive
@@ -82,6 +108,20 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"[\s_]+", "-", slug)
     slug = re.sub(r"-+", "-", slug)
     return slug.strip("-")[:80]
+
+
+def _detect_platform(url: str) -> str | None:
+    """Detect social platform from a URL."""
+    for pattern, platform in PLATFORM_PATTERNS:
+        if re.search(pattern, url, re.IGNORECASE):
+            return platform
+    return None
+
+
+def _account_slug(handle: str | None, name: str, platform: str) -> str:
+    """Build a slug for an account note: <handle>-<platform> or <name>-<platform>."""
+    base = _slugify(handle) if handle else _slugify(name)
+    return f"{base}-{platform}"
 
 
 def _find_claude() -> str | None:
@@ -201,7 +241,13 @@ def _create_video_note(
     if url:
         frontmatter["url"] = url
     if channel:
-        frontmatter["channel"] = channel
+        # Link to account entity if we can determine the platform
+        platform = _detect_platform(url) if url else None
+        if platform:
+            account_slug = _account_slug(None, channel, platform)
+            frontmatter["channel"] = f"[[{account_slug}]]"
+        else:
+            frontmatter["channel"] = channel
     if duration:
         frontmatter["duration"] = round(duration)
 
@@ -245,6 +291,10 @@ def _create_or_update_entity(
 
     if not name or entity_type not in ENTITY_FOLDERS:
         return None, "skipped"
+
+    # Account entities use a different slug scheme: <handle>-<platform>
+    if entity_type == "account":
+        return _create_or_update_account(entity, video_slug, video_title)
 
     slug = _slugify(name)
     folder = ENTITY_FOLDERS[entity_type]
@@ -318,12 +368,82 @@ def _create_or_update_entity(
     return path, "created"
 
 
+def _create_or_update_account(
+    entity: dict,
+    video_slug: str,
+    video_title: str,
+) -> tuple[Path | None, str]:
+    """Create or update a vault note for an Account entity.
+
+    Returns (path, action) where action is 'created', 'updated', or 'skipped'.
+    """
+    name = entity.get("name", "").strip()
+    platform = (entity.get("platform") or "").lower().strip()
+    handle = (entity.get("handle") or "").strip()
+    context = entity.get("context", "")
+    relationships = entity.get("relationships", [])
+
+    if not platform:
+        return None, "skipped"
+
+    slug = _account_slug(handle, name, platform)
+    path = ACCOUNTS_FOLDER / f"{slug}.md"
+
+    mention_line = f"Channel for [[{_slugify(video_title)}]] -- {context}"
+
+    if path.exists():
+        existing = path.read_text()
+        video_ref = _slugify(video_title)
+        if video_ref not in existing:
+            updated = existing.rstrip() + f"\n\n{mention_line}\n"
+            path.write_text(updated)
+            return path, "updated"
+        return path, "skipped"
+
+    # Create new account note
+    ACCOUNTS_FOLDER.mkdir(parents=True, exist_ok=True)
+
+    # Clean display name (strip platform suffix Sonnet might add)
+    display_name = re.sub(r"\s*\(.*?\)\s*$", "", name).strip()
+
+    tags = ["account", platform]
+    frontmatter = {
+        "title": display_name,
+        "type": "account",
+        "tags": tags,
+        "platform": platform,
+        "created": str(date.today()),
+    }
+    if handle:
+        frontmatter["handle"] = handle
+    # Build managedBy from relationships
+    managed_by = []
+    for rel in relationships:
+        if rel.get("predicate") == "managedBy" and rel.get("target"):
+            managed_by.append(f"[[{_slugify(rel['target'])}]]")
+    if managed_by:
+        if len(managed_by) == 1:
+            frontmatter["managedBy"] = managed_by[0]
+        else:
+            frontmatter["managedBy"] = managed_by
+
+    body = f"# {display_name}\n\n{mention_line}\n"
+    content = _format_note(frontmatter, body)
+    path.write_text(content)
+    return path, "created"
+
+
 def _format_note(frontmatter: dict, body: str) -> str:
     """Format a vault note with YAML frontmatter."""
     lines = ["---"]
     for key, value in frontmatter.items():
         if isinstance(value, list):
-            lines.append(f"{key}: [{', '.join(str(v) for v in value)}]")
+            # Check if list contains wiki-links that need quoting
+            if value and isinstance(value[0], str) and value[0].startswith("[["):
+                quoted = [f'"{v}"' for v in value]
+                lines.append(f"{key}: [{', '.join(quoted)}]")
+            else:
+                lines.append(f"{key}: [{', '.join(str(v) for v in value)}]")
         elif isinstance(value, str) and value.startswith("[["):
             lines.append(f'{key}: "{value}"')
         else:
@@ -445,6 +565,25 @@ def extract_and_persist(
     )
     if on_progress:
         on_progress(f"  Video note: {video_path.relative_to(VAULT_PATH)}")
+
+    # Ensure the publishing channel has an Account entity
+    if channel and source_type in ("youtube", "instagram"):
+        platform = source_type
+        channel_slug = _account_slug(None, channel, platform)
+        channel_account_path = ACCOUNTS_FOLDER / f"{channel_slug}.md"
+        if not channel_account_path.exists():
+            # Synthesize an account entity for the channel
+            channel_entity = {
+                "name": channel,
+                "type": "account",
+                "platform": platform,
+                "handle": None,
+                "context": f"Publishing channel for this video",
+                "relationships": [],
+            }
+            _create_or_update_account(channel_entity, video_slug, title)
+            if on_progress:
+                on_progress(f"    + account: {channel} ({channel_slug}.md)")
 
     # Create/update entity notes
     created = 0
