@@ -302,7 +302,10 @@ def _cut_chunks(
 def extract_audio(video_path: str, output_path: str | None = None) -> str:
     """Extract audio from a video file as 16kHz mono WAV (Whisper-ready)."""
     if output_path is None:
-        output_path = tempfile.mktemp(prefix="glean_audio_", suffix=".wav")
+        # NamedTemporaryFile with delete=False instead of deprecated mktemp
+        f = tempfile.NamedTemporaryFile(prefix="glean_audio_", suffix=".wav", delete=False)
+        output_path = f.name
+        f.close()
     subprocess.run(
         [get_ffmpeg(), "-y", "-i", video_path, "-vn", "-ar", "16000", "-ac", "1", output_path],
         capture_output=True, check=True,

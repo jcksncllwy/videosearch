@@ -86,6 +86,20 @@ def parse_timestamped_lines(timestamped_text: str) -> list[dict]:
     return entries
 
 
+def _strip_timestamps(timestamped_text: str) -> str:
+    """Strip timestamp prefixes from Whisper output to get plain text."""
+    lines = []
+    for line in timestamped_text.split("\n"):
+        match = _TS_LINE_RE.match(line)
+        if match:
+            text = match.group(7).strip()
+            if text:
+                lines.append(text)
+        elif line.strip():
+            lines.append(line.strip())
+    return " ".join(lines) if lines else ""
+
+
 def transcribe_file(
     audio_path: str,
     model: str | None = None,
@@ -157,8 +171,12 @@ def transcribe_video_chunk(
         return None, None
 
     try:
-        plain = transcribe_file(wav_path, model=model, timestamps=False)
+        # Transcribe once with timestamps, derive plain text by stripping them.
+        # This halves transcription time vs calling Whisper twice.
         timestamped = transcribe_file(wav_path, model=model, timestamps=True)
+
+        # Derive plain text by stripping timestamp prefixes
+        plain = _strip_timestamps(timestamped) if timestamped else None
 
         # Offset timestamps to absolute video time
         if timestamped and chunk_start_time > 0:

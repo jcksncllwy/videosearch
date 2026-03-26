@@ -191,14 +191,22 @@ def _parse_extraction_response(response: str) -> list[dict]:
         data = json.loads(text)
         return data.get("entities", [])
     except json.JSONDecodeError:
-        # Try to find JSON in the response
-        match = re.search(r'\{[\s\S]*"entities"[\s\S]*\}', text)
-        if match:
-            try:
-                data = json.loads(match.group())
-                return data.get("entities", [])
-            except json.JSONDecodeError:
-                pass
+        # Try to extract JSON by finding balanced braces from the first {
+        start = text.find("{")
+        if start >= 0:
+            # Walk forward to find the matching closing brace
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            data = json.loads(text[start:i + 1])
+                            return data.get("entities", [])
+                        except json.JSONDecodeError:
+                            break
         return []
 
 
@@ -608,6 +616,18 @@ def _create_or_update_account(
     return path, "created"
 
 
+# Characters that require quoting in YAML values
+_YAML_SPECIAL_RE = re.compile(r'[:\#\[\]\{\},&\*\?\|<>=!%@\'"]')
+
+
+def _yaml_escape(value: str) -> str:
+    """Quote a string value if it contains YAML-special characters."""
+    if _YAML_SPECIAL_RE.search(value) or value.startswith(("-", " ")):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
 def _format_note(frontmatter: dict, body: str) -> str:
     """Format a vault note with YAML frontmatter."""
     lines = ["---"]
@@ -621,6 +641,8 @@ def _format_note(frontmatter: dict, body: str) -> str:
                 lines.append(f"{key}: [{', '.join(str(v) for v in value)}]")
         elif isinstance(value, str) and value.startswith("[["):
             lines.append(f'{key}: "{value}"')
+        elif isinstance(value, str):
+            lines.append(f"{key}: {_yaml_escape(value)}")
         else:
             lines.append(f"{key}: {value}")
     lines.append("---")
@@ -630,15 +652,20 @@ def _format_note(frontmatter: dict, body: str) -> str:
 
 
 def _add_frontmatter_field(path: Path, key: str, value: str):
-    """Add a field to existing YAML frontmatter."""
+    """Add a field to existing YAML frontmatter.
+
+    Only splits on line-start --- delimiters (not horizontal rules in body).
+    """
     content = path.read_text()
-    # Find the closing --- and insert before it
-    parts = content.split("---", 2)
+    # Match --- only at line start (or file start) to avoid splitting on
+    # horizontal rules or --- separators inside the note body.
+    parts = re.split(r"(?:^|\n)---\s*\n", content, maxsplit=2)
     if len(parts) >= 3:
+        # parts[0] is empty (before opening ---), parts[1] is frontmatter, parts[2] is body
         fm = parts[1]
-        if key not in fm:
+        if f"{key}:" not in fm:
             fm = fm.rstrip() + f"\n{key}: {value}\n"
-            path.write_text(f"---{fm}---{parts[2]}")
+            path.write_text(f"---\n{fm}---\n{parts[2]}")
 
 
 # ------------------------------------------------------------------

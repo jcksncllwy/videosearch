@@ -39,6 +39,7 @@ class VideoStore:
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
 
     def _init_schema(self):
@@ -165,6 +166,16 @@ class VideoStore:
         if embedding:
             emb_blob = json.dumps(embedding).encode()
 
+        # Clean up old FTS entry before replacing the chunk (INSERT OR REPLACE
+        # deletes+reinserts, changing the rowid and orphaning the old FTS entry)
+        old_row = self._conn.execute(
+            "SELECT rowid FROM chunks WHERE id = ?", (chunk_id,)
+        ).fetchone()
+        if old_row:
+            self._conn.execute(
+                "DELETE FROM chunks_fts WHERE rowid = ?", (old_row[0],)
+            )
+
         self._conn.execute(
             """INSERT OR REPLACE INTO chunks
                (id, video_id, chunk_path, start_time, end_time,
@@ -182,7 +193,7 @@ class VideoStore:
                 "SELECT rowid FROM chunks WHERE id = ?", (chunk_id,)
             ).fetchone()[0]
             self._conn.execute(
-                "INSERT OR REPLACE INTO chunks_fts(rowid, transcript) VALUES (?, ?)",
+                "INSERT INTO chunks_fts(rowid, transcript) VALUES (?, ?)",
                 (rowid, transcript),
             )
 

@@ -1,5 +1,7 @@
 """Search with cost cascade: free transcript search first, paid embeddings on demand."""
 
+import os
+
 import click
 
 from .store import VideoStore
@@ -116,7 +118,7 @@ def _embed_chunks(
     for i, chunk in enumerate(chunks):
         if verbose:
             click.echo(f"  [embed] chunk {i + 1}/{len(chunks)}", err=True)
-        if not chunk["chunk_path"] or not __import__("os").path.isfile(chunk["chunk_path"]):
+        if not chunk["chunk_path"] or not os.path.isfile(chunk["chunk_path"]):
             continue
         embedding = embed_video_chunk(chunk["chunk_path"], verbose=verbose)
         store.set_embedding(chunk["id"], embedding)

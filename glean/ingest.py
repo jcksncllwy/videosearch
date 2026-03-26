@@ -6,6 +6,7 @@ structured notes in the Obsidian vault knowledge graph.
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -304,6 +305,9 @@ def ingest_youtube(
             channel=channel, verbose=verbose, on_progress=on_progress,
         )
 
+    # Clean up downloaded source video (chunks are separate temp files)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
     return {
         "files": 1,
         "chunks": len(chunks),
@@ -385,11 +389,13 @@ def ingest_instagram(
         duration=duration,
     )
 
-    # Reels are short -- usually one chunk is enough
-    if duration <= 60:
-        chunks = [{"chunk_path": video_file, "source_file": video_file, "start_time": 0.0, "end_time": duration}]
-    else:
-        chunks = chunk_video(video_file, chunk_duration=30, overlap=5, keep_audio=True, smart=True, verbose=verbose)
+    # Use chunk_video for consistent chunk dict structure. Short reels
+    # get one chunk; longer ones get smart-split like YouTube videos.
+    chunks = chunk_video(
+        video_file,
+        chunk_duration=max(30, int(duration) + 1),  # single chunk for short reels
+        overlap=5, keep_audio=True, smart=True, verbose=verbose,
+    )
 
     total_transcribed = 0
     chunk_transcripts = []
@@ -427,6 +433,9 @@ def ingest_instagram(
             url=url, duration=duration, description=description,
             channel=channel, verbose=verbose, on_progress=on_progress,
         )
+
+    # Clean up downloaded source video
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return {
         "files": 1,

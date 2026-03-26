@@ -123,7 +123,7 @@ class TestVideoStore:
         assert stats["total_chunks"] == 0
 
 
-class TestCosineSimlarity:
+class TestCosineSimilarity:
     def test_identical_vectors(self):
         from glean.store import _cosine_similarity
         a = [1.0, 0.0, 0.0]

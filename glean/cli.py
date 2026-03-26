@@ -307,7 +307,8 @@ def refresh_cookies_cmd(browser):
         click.secho(f"Failed: {result.stderr.strip()}", fg="red", err=True)
         raise SystemExit(1)
 
-    lines = sum(1 for _ in open(cookie_jar))
+    with open(cookie_jar) as f:
+        lines = sum(1 for _ in f)
     click.echo(f"Saved {lines} cookies to {cookie_jar}")
     click.echo("Future YouTube ingests will use this file automatically.")
 
