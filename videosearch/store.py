@@ -289,6 +289,27 @@ class VideoStore:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Bulk queries
+    # ------------------------------------------------------------------
+
+    def get_all_videos(self) -> list[dict]:
+        """Return all videos with metadata."""
+        rows = self._conn.execute(
+            "SELECT id, path, source_type, source_url, title, description, channel, duration FROM videos"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_video_chunks(self, video_id: str) -> list[dict]:
+        """Return all chunks for a video, ordered by start time."""
+        rows = self._conn.execute(
+            """SELECT id, start_time, end_time, transcript, transcript_timestamped,
+                      transcript_source, chunk_path
+               FROM chunks WHERE video_id = ? ORDER BY start_time""",
+            (video_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

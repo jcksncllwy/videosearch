@@ -266,6 +266,52 @@ def search(query, n_results, output_dir, trim, visual, verbose):
 
 
 # -----------------------------------------------------------------------
+# cookies
+# -----------------------------------------------------------------------
+
+@cli.command("refresh-cookies")
+@click.argument("browser", default="chrome:Profile 1")
+def refresh_cookies_cmd(browser):
+    """Export browser cookies for YouTube authentication.
+
+    Saves cookies to ~/.videosearch/youtube-cookies.txt so yt-dlp can
+    bypass bot detection without triggering macOS Keychain popups on
+    every download. Re-run when cookies expire (yt-dlp will error with
+    "cookies are no longer valid").
+
+    BROWSER is the browser spec for yt-dlp (default: "chrome:Profile 1").
+    Examples: "chrome", "chrome:Profile 1", "firefox", "safari".
+    """
+    import subprocess
+    from pathlib import Path
+
+    cookie_jar = Path.home() / ".videosearch" / "youtube-cookies.txt"
+    cookie_jar.parent.mkdir(parents=True, exist_ok=True)
+
+    click.echo(f"Exporting cookies from {browser}...")
+    click.echo("(You may see a macOS Keychain prompt -- allow access once.)")
+
+    result = subprocess.run(
+        [
+            "yt-dlp",
+            "--cookies-from-browser", browser,
+            "--cookies", str(cookie_jar),
+            "--dump-json", "--no-download",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        click.secho(f"Failed: {result.stderr.strip()}", fg="red", err=True)
+        raise SystemExit(1)
+
+    lines = sum(1 for _ in open(cookie_jar))
+    click.echo(f"Saved {lines} cookies to {cookie_jar}")
+    click.echo("Future YouTube ingests will use this file automatically.")
+
+
+# -----------------------------------------------------------------------
 # stats
 # -----------------------------------------------------------------------
 
@@ -293,4 +339,96 @@ def stats():
         cost = estimate_embedding_cost(remaining)
         click.echo(f"\n{remaining} chunks not yet visually indexed (~${cost:.2f} to embed).")
 
+    store.close()
+
+
+# -----------------------------------------------------------------------
+# backfill
+# -----------------------------------------------------------------------
+
+@cli.command()
+@click.option("--verbose", is_flag=True, help="Show debug info.")
+def backfill(verbose):
+    """Generate transcript notes in the vault for all indexed videos.
+
+    Creates transcript markdown files with chunk headings for Obsidian
+    deep-linking. Also updates video notes with transcript links.
+    Skips videos that already have transcript notes.
+    """
+    from pathlib import Path
+    from .extract import (
+        _slugify, _create_transcript_note, _add_frontmatter_field,
+        VAULT_PATH, TRANSCRIPTS_FOLDER, VIDEOS_FOLDER,
+    )
+    from .store import VideoStore
+
+    store = VideoStore()
+    videos = store.get_all_videos()
+
+    if not videos:
+        click.echo("No videos indexed. Run `vs ingest` first.")
+        store.close()
+        return
+
+    created = 0
+    skipped = 0
+
+    for video in videos:
+        slug = _slugify(video["title"] or "untitled")
+        transcript_path = TRANSCRIPTS_FOLDER / f"{slug}.md"
+
+        if transcript_path.exists():
+            if verbose:
+                click.echo(f"  Skip {video['title']} (transcript exists)")
+            skipped += 1
+            continue
+
+        chunks = store.get_video_chunks(video["id"])
+        if not chunks:
+            skipped += 1
+            continue
+
+        # Build transcript list matching extract_and_persist format
+        transcripts = []
+        sources = set()
+        for c in chunks:
+            transcripts.append({
+                "transcript": c["transcript"],
+                "transcript_timestamped": c["transcript_timestamped"],
+                "start_time": c["start_time"],
+                "end_time": c["end_time"],
+            })
+            if c.get("transcript_source"):
+                sources.add(c["transcript_source"])
+
+        # Determine primary source
+        if "whisper+youtube" in sources:
+            source = "whisper+youtube"
+        elif "youtube_captions" in sources and "whisper" in sources:
+            source = "whisper+youtube"
+        elif "youtube_captions" in sources:
+            source = "youtube_captions"
+        else:
+            source = "whisper"
+
+        path = _create_transcript_note(
+            video["title"] or "untitled",
+            video["source_type"],
+            video.get("duration"),
+            transcripts,
+            transcript_source=source,
+        )
+        click.echo(f"  + {path.relative_to(VAULT_PATH)}")
+        created += 1
+
+        # Update video note with transcript link if missing
+        video_note = VIDEOS_FOLDER / f"{slug}.md"
+        if video_note.exists():
+            content = video_note.read_text()
+            if "transcript:" not in content:
+                _add_frontmatter_field(video_note, "transcript", f'"[[{slug}]]"')
+                if verbose:
+                    click.echo(f"    Updated video note with transcript link")
+
+    click.echo(f"\nBackfill complete: {created} transcripts created, {skipped} skipped.")
     store.close()
