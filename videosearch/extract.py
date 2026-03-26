@@ -144,7 +144,10 @@ def _call_sonnet(prompt: str) -> str | None:
     # Lean system prompt replaces full CLAUDE.md (~361 lines)
     system = (
         "You are an entity extraction assistant. "
-        "Return ONLY valid JSON. No tools, no file access, no conversation."
+        "Return ONLY valid JSON. No tools, no file access, no conversation. "
+        "CRITICAL: Only extract entities that are explicitly named in the "
+        "provided transcript or description text. Never invent or infer "
+        "entities that do not appear in the input."
     )
 
     try:
