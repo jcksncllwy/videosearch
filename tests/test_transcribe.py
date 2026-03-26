@@ -3,7 +3,7 @@
 Uses Rick Astley lyrics as test data because of course it does.
 """
 
-from videosearch.transcribe import (
+from glean.transcribe import (
     offset_timestamps,
     parse_timestamped_lines,
     _ts_to_seconds,

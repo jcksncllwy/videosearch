@@ -125,18 +125,18 @@ class TestVideoStore:
 
 class TestCosineSimlarity:
     def test_identical_vectors(self):
-        from videosearch.store import _cosine_similarity
+        from glean.store import _cosine_similarity
         a = [1.0, 0.0, 0.0]
         assert _cosine_similarity(a, a) == 1.0
 
     def test_orthogonal_vectors(self):
-        from videosearch.store import _cosine_similarity
+        from glean.store import _cosine_similarity
         a = [1.0, 0.0, 0.0]
         b = [0.0, 1.0, 0.0]
         assert abs(_cosine_similarity(a, b)) < 1e-10
 
     def test_opposite_vectors(self):
-        from videosearch.store import _cosine_similarity
+        from glean.store import _cosine_similarity
         a = [1.0, 0.0]
         b = [-1.0, 0.0]
         assert _cosine_similarity(a, b) == -1.0

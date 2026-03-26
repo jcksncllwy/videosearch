@@ -6,7 +6,7 @@ Test data comes from what YouTube actually serves for Never Gonna Give You Up.
 import os
 import tempfile
 
-from videosearch.ingest import _parse_srt, _parse_srt_timed, _slice_timed_captions
+from glean.ingest import _parse_srt, _parse_srt_timed, _slice_timed_captions
 
 
 # Simulated YouTube auto-caption SRT for Rick Astley

@@ -1,10 +1,10 @@
-# VideoSearch
+# Glean
 
-Personal video search engine. Ingest videos from local files, YouTube, or Instagram. Search with natural language using a cost cascade: free transcript search first, paid Gemini visual search only when needed. Automatically extracts entities to the Obsidian vault knowledge graph.
+Media ingestion and knowledge extraction engine. Ingest videos from local files, YouTube, or Instagram. Transcribe, extract entities to the Obsidian vault knowledge graph, and search with natural language using a cost cascade.
 
 ## Stack
 
-- Python 3.10+, Click CLI (`vs`)
+- Python 3.10+, Click CLI (`glean`)
 - SQLite with FTS5 for transcript search
 - whisper.cpp (via `~/ygg/bin/transcribe`) for local transcription
 - Gemini Embedding 2 for visual/audio embedding (Tier 2, paid, lazy)
@@ -22,7 +22,7 @@ Personal video search engine. Ingest videos from local files, YouTube, or Instag
 
 ### Data Model
 
-- `~/.videosearch/videosearch.db` -- SQLite database
+- `~/.glean/glean.db` -- SQLite database
 - `videos` table: metadata, source type, URLs, description, channel
 - `chunks` table: transcripts (plain + timestamped), timestamps, embeddings (nullable), transcript source
 - `chunks_fts` FTS5 virtual table for transcript search
@@ -63,14 +63,14 @@ Transcript notes use H2 chunk headings like `## 00:05:30 - 00:06:00`. Entity not
 ## CLI
 
 ```
-vs ingest local <path>          # Ingest local video files
-vs ingest youtube <url>         # Download and ingest YouTube video
-vs ingest instagram <url>       # Download and ingest Instagram reel
-vs search "query"               # Search (transcript first)
-vs search "query" --visual      # Search with Tier 2 visual search
-vs stats                        # Show index stats
-vs backfill                     # Generate transcript notes for all indexed videos
-vs refresh-cookies [browser]    # Export browser cookies for YouTube auth
+glean ingest local <path>          # Ingest local video files
+glean ingest youtube <url>         # Download and ingest YouTube video
+glean ingest instagram <url>       # Download and ingest Instagram reel
+glean search "query"               # Search (transcript first)
+glean search "query" --visual      # Search with Tier 2 visual search
+glean stats                        # Show index stats
+glean backfill                     # Generate transcript notes for all indexed videos
+glean refresh-cookies [browser]    # Export browser cookies for YouTube auth
 ```
 
 ### Common Options
@@ -85,9 +85,9 @@ vs refresh-cookies [browser]    # Export browser cookies for YouTube auth
 
 YouTube frequently blocks yt-dlp with "Sign in to confirm you're not a bot." The cookie jar pattern avoids this:
 
-1. **Export once**: `vs refresh-cookies "chrome:Profile 1"` exports browser cookies to `~/.videosearch/youtube-cookies.txt`. This triggers one macOS Keychain popup.
-2. **Auto-detected**: All subsequent `vs ingest youtube` calls automatically use the jar file -- no Keychain popups, no `--cookies-from` flag needed.
-3. **Refresh when needed**: When cookies expire, yt-dlp will error. Run `vs refresh-cookies` again.
+1. **Export once**: `glean refresh-cookies "chrome:Profile 1"` exports browser cookies to `~/.glean/youtube-cookies.txt`. This triggers one macOS Keychain popup.
+2. **Auto-detected**: All subsequent `glean ingest youtube` calls automatically use the jar file -- no Keychain popups, no `--cookies-from` flag needed.
+3. **Refresh when needed**: When cookies expire, yt-dlp will error. Run `glean refresh-cookies` again.
 
 The cookie jar is checked first. `--cookies-from` is a fallback that extracts live from the browser (triggers Keychain popup each time).
 
@@ -125,6 +125,16 @@ The cookie jar is checked first. `--cookies-from` is a fallback that extracts li
 - `GEMINI_API_KEY` in `.env` -- only needed for Tier 2 visual search
 - `OBSIDIAN_VAULT` -- vault path override (default: `~/obsidian/brain`)
 - `claude` CLI -- must be on PATH for entity extraction
+
+## Data Migration
+
+If upgrading from the old `videosearch` name, move the data directory:
+
+```bash
+mv ~/.videosearch ~/.glean
+```
+
+The database and cookie jar paths have changed from `~/.videosearch/` to `~/.glean/`.
 
 ## Development
 

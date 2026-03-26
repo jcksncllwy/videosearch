@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "videosearch"
-version = "0.1.0"
-description = "Search video collections with natural language. Free transcript search, with optional paid visual search via Gemini."
+name = "glean"
+version = "0.2.0"
+description = "Ingest media, extract knowledge to Obsidian vault, search with natural language."
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.1",
@@ -19,10 +19,10 @@ dependencies = [
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-vs = "videosearch.cli:cli"
+glean = "glean.cli:cli"
 
 [tool.setuptools.packages.find]
-include = ["videosearch*"]
+include = ["glean*"]
 
 [tool.pytest.ini_options]
 markers = [

@@ -272,7 +272,7 @@ def _cut_chunks(
 ) -> list[dict]:
     """Cut video at the given boundaries."""
     ffmpeg = get_ffmpeg()
-    tmp_dir = tempfile.mkdtemp(prefix="videosearch_")
+    tmp_dir = tempfile.mkdtemp(prefix="glean_")
     chunks = []
 
     for idx, (start, end) in enumerate(boundaries):
@@ -302,7 +302,7 @@ def _cut_chunks(
 def extract_audio(video_path: str, output_path: str | None = None) -> str:
     """Extract audio from a video file as 16kHz mono WAV (Whisper-ready)."""
     if output_path is None:
-        output_path = tempfile.mktemp(prefix="videosearch_audio_", suffix=".wav")
+        output_path = tempfile.mktemp(prefix="glean_audio_", suffix=".wav")
     subprocess.run(
         [get_ffmpeg(), "-y", "-i", video_path, "-vn", "-ar", "16000", "-ac", "1", output_path],
         capture_output=True, check=True,

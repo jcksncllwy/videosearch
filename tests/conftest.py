@@ -1,4 +1,4 @@
-"""Shared fixtures for VideoSearch tests.
+"""Shared fixtures for Glean tests.
 
 The canonical test video is Rick Astley - Never Gonna Give You Up.
 It's a good test case: continuous music (validates silence detection fallback),
@@ -53,7 +53,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def store(tmp_db):
     """Return a VideoStore with a temporary database."""
-    from videosearch.store import VideoStore
+    from glean.store import VideoStore
     s = VideoStore(db_path=tmp_db)
     yield s
     s.close()

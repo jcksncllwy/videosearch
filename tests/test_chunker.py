@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from videosearch.chunker import (
+from glean.chunker import (
     _compute_fixed_boundaries,
     _compute_smart_boundaries,
     _find_nearest_silence,

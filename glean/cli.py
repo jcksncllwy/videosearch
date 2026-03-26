@@ -1,4 +1,4 @@
-"""CLI entry point for VideoSearch."""
+"""CLI entry point for Glean."""
 
 import os
 import platform
@@ -33,10 +33,11 @@ def _open_file(path: str):
 
 @click.group()
 def cli():
-    """Search video collections with natural language.
+    """Glean -- ingest media, extract knowledge, search with natural language.
 
-    Ingest videos from local files, YouTube, or Instagram.
-    Search uses free transcript lookup first, with optional paid visual search.
+    Ingest videos from local files, YouTube, or Instagram. Extracts entities
+    to the Obsidian vault knowledge graph. Search uses free transcript lookup
+    first, with optional paid visual search.
     """
 
 
@@ -197,7 +198,7 @@ def search(query, n_results, output_dir, trim, visual, verbose):
     stats = store.get_stats()
 
     if stats["total_chunks"] == 0:
-        click.echo("No videos indexed yet. Run `vs ingest local <path>` first.")
+        click.echo("No videos indexed yet. Run `glean ingest local <path>` first.")
         store.close()
         return
 
@@ -274,7 +275,7 @@ def search(query, n_results, output_dir, trim, visual, verbose):
 def refresh_cookies_cmd(browser):
     """Export browser cookies for YouTube authentication.
 
-    Saves cookies to ~/.videosearch/youtube-cookies.txt so yt-dlp can
+    Saves cookies to ~/.glean/youtube-cookies.txt so yt-dlp can
     bypass bot detection without triggering macOS Keychain popups on
     every download. Re-run when cookies expire (yt-dlp will error with
     "cookies are no longer valid").
@@ -285,7 +286,7 @@ def refresh_cookies_cmd(browser):
     import subprocess
     from pathlib import Path
 
-    cookie_jar = Path.home() / ".videosearch" / "youtube-cookies.txt"
+    cookie_jar = Path.home() / ".glean" / "youtube-cookies.txt"
     cookie_jar.parent.mkdir(parents=True, exist_ok=True)
 
     click.echo(f"Exporting cookies from {browser}...")
@@ -324,7 +325,7 @@ def stats():
     s = store.get_stats()
 
     if s["total_chunks"] == 0:
-        click.echo("Index is empty. Run `vs ingest` to add videos.")
+        click.echo("Index is empty. Run `glean ingest` to add videos.")
         store.close()
         return
 
@@ -366,7 +367,7 @@ def backfill(verbose):
     videos = store.get_all_videos()
 
     if not videos:
-        click.echo("No videos indexed. Run `vs ingest` first.")
+        click.echo("No videos indexed. Run `glean ingest` first.")
         store.close()
         return
 

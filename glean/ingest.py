@@ -14,13 +14,13 @@ from .chunker import chunk_video, extract_audio, get_duration, scan_directory
 from .store import VideoStore
 from .transcribe import transcribe_video_chunk
 
-DEFAULT_COOKIE_JAR = Path.home() / ".videosearch" / "youtube-cookies.txt"
+DEFAULT_COOKIE_JAR = Path.home() / ".glean" / "youtube-cookies.txt"
 
 
 def _ytdlp_cookie_args(cookies_from_browser: str | None = None) -> list[str]:
     """Build yt-dlp cookie arguments.
 
-    Prefers a saved cookie jar at ~/.videosearch/youtube-cookies.txt (no
+    Prefers a saved cookie jar at ~/.glean/youtube-cookies.txt (no
     Keychain popup). Falls back to --cookies-from-browser if specified.
     """
     if DEFAULT_COOKIE_JAR.exists():
@@ -187,7 +187,7 @@ def ingest_youtube(
             on_progress(f"  Channel: {channel}")
 
     # Download video + subtitles to temp dir
-    tmp_dir = tempfile.mkdtemp(prefix="videosearch_yt_")
+    tmp_dir = tempfile.mkdtemp(prefix="glean_yt_")
     output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
     dl_cmd = [
@@ -347,7 +347,7 @@ def ingest_instagram(
         if channel:
             on_progress(f"  Creator: {channel}")
 
-    tmp_dir = tempfile.mkdtemp(prefix="videosearch_ig_")
+    tmp_dir = tempfile.mkdtemp(prefix="glean_ig_")
     output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
     # yt-dlp handles Instagram too

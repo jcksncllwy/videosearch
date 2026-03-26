@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path.home() / ".videosearch" / "videosearch.db"
+DEFAULT_DB_PATH = Path.home() / ".glean" / "glean.db"
 
 
 def _make_chunk_id(source_file: str, start_time: float) -> str:
