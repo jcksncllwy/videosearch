@@ -327,6 +327,7 @@ def throttle():
 def throttle_status():
     """Show current throttle state."""
     from .ingest import THROTTLE_FILE, _check_instagram_throttle
+    import datetime
     import json
 
     if not THROTTLE_FILE.exists():
@@ -345,11 +346,9 @@ def throttle_status():
         click.secho("Instagram: clear", fg="green")
 
     if ig.get("last_request"):
-        import datetime
         ts = datetime.datetime.fromtimestamp(ig["last_request"])
         click.echo(f"  Last request: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
     if ig.get("last_rate_limit"):
-        import datetime
         ts = datetime.datetime.fromtimestamp(ig["last_rate_limit"])
         click.echo(f"  Last rate limit: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
 

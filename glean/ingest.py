@@ -403,11 +403,11 @@ def ingest_instagram(
     Captures the post caption as description for search and entity extraction.
     Uses instaloader for downloading (no auth needed for public posts).
     """
-    import re as re_mod
+    import re
     import instaloader
 
     # Extract shortcode from URL
-    match = re_mod.search(r'/(?:reel|reels|p)/([A-Za-z0-9_-]+)', url)
+    match = re.search(r'/(?:reel|reels|p)/([A-Za-z0-9_-]+)', url)
     if not match:
         raise ValueError(f"Could not extract shortcode from URL: {url}")
     shortcode = match.group(1)
@@ -452,7 +452,7 @@ def ingest_instagram(
         post = instaloader.Post.from_shortcode(L.context, shortcode)
     except Exception as e:
         err_str = str(e)
-        if "401" in err_str or "429" in err_str or "rate" in err_str.lower():
+        if "401" in err_str or "429" in err_str or "Too Many Requests" in err_str:
             _record_instagram_rate_limit()
             raise RuntimeError(
                 f"Instagram rate limited. Backing off for "
@@ -462,20 +462,23 @@ def ingest_instagram(
 
     description = post.caption or ""
     channel = post.owner_username or ""
-    meta_title = post.title or ""
+    # Post.title doesn't exist on instaloader -- derive from caption
+    first_line = (post.caption or "").split('\n')[0][:80].strip()
+    meta_title = first_line if first_line else ""
 
     if on_progress and channel:
         on_progress(f"  Creator: {channel}")
 
-    # Download the video
-    _record_instagram_request()
-    L.download_post(post, target="")
+    # Download the video (instaloader's rate controller handles pacing)
+    L.download_post(post, target=shortcode)
 
-    # Find downloaded video file
+    # Find downloaded video file (target=shortcode puts files in tmp_dir/shortcode/)
+    dl_dir = os.path.join(tmp_dir, shortcode)
     video_file = None
-    for f in os.listdir(tmp_dir):
+    search_dir = dl_dir if os.path.isdir(dl_dir) else tmp_dir
+    for f in os.listdir(search_dir):
         if f.endswith((".mp4", ".webm", ".mkv")):
-            video_file = os.path.join(tmp_dir, f)
+            video_file = os.path.join(search_dir, f)
             break
 
     if not video_file:
