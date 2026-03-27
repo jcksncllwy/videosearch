@@ -13,6 +13,8 @@ dependencies = [
     "google-genai>=1.0",
     "ffmpeg-python>=0.2",
     "imageio-ffmpeg>=0.5",
+    "instaloader>=4.15",
+    "pymupdf>=1.24",
 ]
 
 [project.optional-dependencies]
