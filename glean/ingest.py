@@ -5,10 +5,12 @@ Entity extraction runs automatically via Claude Sonnet, creating/updating
 structured notes in the Obsidian vault knowledge graph.
 """
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from .chunker import chunk_video, extract_audio, get_duration, scan_directory
@@ -16,6 +18,75 @@ from .store import VideoStore
 from .transcribe import transcribe_video_chunk
 
 DEFAULT_COOKIE_JAR = Path.home() / ".glean" / "youtube-cookies.txt"
+
+# yt-dlp throttle args -- applied to all yt-dlp calls to avoid triggering rate limits
+YTDLP_THROTTLE_ARGS = [
+    "--sleep-requests", "1",       # 1s between API requests
+    "--sleep-interval", "5",       # 5-10s before each download
+    "--max-sleep-interval", "10",
+    "--retry-sleep", "http:5",     # 5s before retrying HTTP errors
+]
+THROTTLE_FILE = Path.home() / ".glean" / "throttle.json"
+
+# Minimum seconds between Instagram API requests
+INSTAGRAM_MIN_INTERVAL = 10
+# Backoff after a rate limit error (seconds)
+INSTAGRAM_RATE_LIMIT_BACKOFF = 300  # 5 minutes
+
+
+def _check_instagram_throttle() -> float:
+    """Check throttle state. Returns seconds to wait, or 0 if clear."""
+    if not THROTTLE_FILE.exists():
+        return 0
+    try:
+        data = json.loads(THROTTLE_FILE.read_text())
+        ig = data.get("instagram", {})
+
+        # Check if we're in a rate-limit backoff period
+        blocked_until = ig.get("blocked_until", 0)
+        if blocked_until > time.time():
+            return blocked_until - time.time()
+
+        # Check minimum interval between requests
+        last_request = ig.get("last_request", 0)
+        elapsed = time.time() - last_request
+        if elapsed < INSTAGRAM_MIN_INTERVAL:
+            return INSTAGRAM_MIN_INTERVAL - elapsed
+
+        return 0
+    except (json.JSONDecodeError, KeyError):
+        return 0
+
+
+def _record_instagram_request():
+    """Record that we just made an Instagram API request."""
+    data = {}
+    if THROTTLE_FILE.exists():
+        try:
+            data = json.loads(THROTTLE_FILE.read_text())
+        except json.JSONDecodeError:
+            pass
+    ig = data.get("instagram", {})
+    ig["last_request"] = time.time()
+    data["instagram"] = ig
+    THROTTLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    THROTTLE_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _record_instagram_rate_limit():
+    """Record that we hit a rate limit — enforce a backoff period."""
+    data = {}
+    if THROTTLE_FILE.exists():
+        try:
+            data = json.loads(THROTTLE_FILE.read_text())
+        except json.JSONDecodeError:
+            pass
+    ig = data.get("instagram", {})
+    ig["blocked_until"] = time.time() + INSTAGRAM_RATE_LIMIT_BACKOFF
+    ig["last_rate_limit"] = time.time()
+    data["instagram"] = ig
+    THROTTLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    THROTTLE_FILE.write_text(json.dumps(data, indent=2))
 
 
 def _ytdlp_cookie_args(cookies_from_browser: str | None = None) -> list[str]:
@@ -172,7 +243,7 @@ def ingest_youtube(
 
     # Get video metadata first
     cookie_args = _ytdlp_cookie_args(cookies_from_browser)
-    meta_cmd = ["yt-dlp", "--dump-json", "--no-download"] + cookie_args + [url]
+    meta_cmd = ["yt-dlp", "--dump-json", "--no-download"] + YTDLP_THROTTLE_ARGS + cookie_args + [url]
     meta_result = subprocess.run(meta_cmd, capture_output=True, text=True)
     if meta_result.returncode != 0:
         raise RuntimeError(f"yt-dlp metadata failed: {meta_result.stderr}")
@@ -199,7 +270,7 @@ def ingest_youtube(
         "--sub-lang", "en",
         "--convert-subs", "srt",
         "-o", output_template,
-    ] + cookie_args + [url]
+    ] + YTDLP_THROTTLE_ARGS + cookie_args + [url]
     dl_result = subprocess.run(dl_cmd, capture_output=True, text=True)
     if dl_result.returncode != 0:
         raise RuntimeError(f"yt-dlp download failed: {dl_result.stderr}")
@@ -330,42 +401,77 @@ def ingest_instagram(
 
     Reels are short (15-90s) so typically a single chunk, no splitting needed.
     Captures the post caption as description for search and entity extraction.
+    Uses instaloader for downloading (no auth needed for public posts).
     """
-    import json as json_mod
+    import re as re_mod
+    import instaloader
 
-    # Get metadata first (caption, uploader, duration)
-    meta_result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-download", url],
-        capture_output=True, text=True,
-    )
-    meta = {}
-    if meta_result.returncode == 0 and meta_result.stdout.strip():
-        meta = json_mod.loads(meta_result.stdout)
+    # Extract shortcode from URL
+    match = re_mod.search(r'/(?:reel|reels|p)/([A-Za-z0-9_-]+)', url)
+    if not match:
+        raise ValueError(f"Could not extract shortcode from URL: {url}")
+    shortcode = match.group(1)
 
-    description = meta.get("description") or ""
-    channel = meta.get("channel") or meta.get("uploader") or ""
-    meta_title = meta.get("title") or ""
+    # Check throttle before making any Instagram API calls
+    wait_time = _check_instagram_throttle()
+    if wait_time > 0:
+        mins = int(wait_time // 60)
+        secs = int(wait_time % 60)
+        raise RuntimeError(
+            f"Instagram rate limit cooldown: {mins}m {secs}s remaining. "
+            f"Try again later or check ~/.glean/throttle.json"
+        )
 
     if on_progress:
-        on_progress(f"Downloading reel...")
-        if channel:
-            on_progress(f"  Creator: {channel}")
+        on_progress("Downloading reel via instaloader...")
 
     tmp_dir = tempfile.mkdtemp(prefix="glean_ig_")
-    output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
-    # yt-dlp handles Instagram too
-    dl_cmd = [
-        "yt-dlp",
-        "-f", "mp4/best",
-        "-o", output_template,
-        url,
-    ]
-    dl_result = subprocess.run(dl_cmd, capture_output=True, text=True)
-    if dl_result.returncode != 0:
-        raise RuntimeError(f"Download failed: {dl_result.stderr}")
+    L = instaloader.Instaloader(
+        dirname_pattern=tmp_dir,
+        filename_pattern="{shortcode}",
+        download_videos=True,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False,
+        compress_json=False,
+        post_metadata_txt_pattern="",
+    )
 
-    # Find downloaded file
+    # Keep instaloader's native rate controller (handles pacing and 429 backoff).
+    # Cap retries at 3 so we don't hang forever on non-429 errors (401/403),
+    # but let the RateController's sleep/wait logic work normally.
+    L.context.max_connection_attempts = 3
+
+    # Record the request for throttling
+    _record_instagram_request()
+
+    # Fetch the post
+    try:
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+    except Exception as e:
+        err_str = str(e)
+        if "401" in err_str or "429" in err_str or "rate" in err_str.lower():
+            _record_instagram_rate_limit()
+            raise RuntimeError(
+                f"Instagram rate limited. Backing off for "
+                f"{INSTAGRAM_RATE_LIMIT_BACKOFF // 60} minutes. Error: {e}"
+            )
+        raise
+
+    description = post.caption or ""
+    channel = post.owner_username or ""
+    meta_title = post.title or ""
+
+    if on_progress and channel:
+        on_progress(f"  Creator: {channel}")
+
+    # Download the video
+    _record_instagram_request()
+    L.download_post(post, target="")
+
+    # Find downloaded video file
     video_file = None
     for f in os.listdir(tmp_dir):
         if f.endswith((".mp4", ".webm", ".mkv")):
@@ -373,7 +479,7 @@ def ingest_instagram(
             break
 
     if not video_file:
-        raise RuntimeError("No video file found after download")
+        raise RuntimeError("No video file found after download — post may not be a video")
 
     duration = get_duration(video_file)
     # Use metadata title if available, fall back to filename

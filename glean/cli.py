@@ -314,6 +314,59 @@ def refresh_cookies_cmd(browser):
 
 
 # -----------------------------------------------------------------------
+# throttle
+# -----------------------------------------------------------------------
+
+@cli.group()
+def throttle():
+    """Check or reset API throttle state."""
+    pass
+
+
+@throttle.command("status")
+def throttle_status():
+    """Show current throttle state."""
+    from .ingest import THROTTLE_FILE, _check_instagram_throttle
+    import json
+
+    if not THROTTLE_FILE.exists():
+        click.echo("No throttle state. All clear.")
+        return
+
+    data = json.loads(THROTTLE_FILE.read_text())
+    ig = data.get("instagram", {})
+
+    wait = _check_instagram_throttle()
+    if wait > 0:
+        mins = int(wait // 60)
+        secs = int(wait % 60)
+        click.secho(f"Instagram: rate limited, {mins}m {secs}s remaining", fg="red")
+    else:
+        click.secho("Instagram: clear", fg="green")
+
+    if ig.get("last_request"):
+        import datetime
+        ts = datetime.datetime.fromtimestamp(ig["last_request"])
+        click.echo(f"  Last request: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+    if ig.get("last_rate_limit"):
+        import datetime
+        ts = datetime.datetime.fromtimestamp(ig["last_rate_limit"])
+        click.echo(f"  Last rate limit: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+@throttle.command("reset")
+def throttle_reset():
+    """Clear all throttle state (use after manual cooldown)."""
+    from .ingest import THROTTLE_FILE
+
+    if THROTTLE_FILE.exists():
+        THROTTLE_FILE.unlink()
+        click.echo("Throttle state cleared.")
+    else:
+        click.echo("No throttle state to clear.")
+
+
+# -----------------------------------------------------------------------
 # stats
 # -----------------------------------------------------------------------
 
